@@ -1,10 +1,11 @@
+#include <torch/torch.h>
+#include <torch/script.h>
+
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
-#include <numeric>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -75,173 +76,77 @@ std::vector<float> DecryptVector(const EncryptedVector &enc) {
 }
 
 // -----------------------------------------------------------------------------
-// Secure routing primitives implemented with lightweight tensor helpers.
+// Secure routing primitives.
 // -----------------------------------------------------------------------------
-namespace lite {
 
-float Dot(const std::vector<float> &a, const std::vector<float> &b) {
-    if (a.size() != b.size()) {
-        throw std::invalid_argument("Dot product requires vectors of equal length");
-    }
-    return std::inner_product(a.begin(), a.end(), b.begin(), 0.0f);
-}
-
-float SquaredL2Norm(const std::vector<float> &values) {
-    float sum = 0.0f;
-    for (float v : values) {
-        sum += v * v;
-    }
-    return sum;
-}
-
-std::vector<float> Normalize(const std::vector<float> &values) {
-    std::vector<float> normalised(values.begin(), values.end());
-    float norm = std::sqrt(SquaredL2Norm(normalised));
-    if (norm > 1e-12f) {
-        for (float &v : normalised) {
-            v /= norm;
-        }
-    }
-    return normalised;
-}
-
-std::vector<float> ElementWiseMultiply(const std::vector<float> &a,
-                                       const std::vector<float> &b) {
-    if (a.size() != b.size()) {
-        throw std::invalid_argument("Element-wise multiply expects equal length vectors");
-    }
-    std::vector<float> out(a.size());
-    for (size_t i = 0; i < a.size(); ++i) {
-        out[i] = a[i] * b[i];
-    }
-    return out;
-}
-
-std::vector<float> ElementWiseSquareDifference(const std::vector<float> &a,
-                                               const std::vector<float> &b) {
-    if (a.size() != b.size()) {
-        throw std::invalid_argument("Element-wise difference expects equal length vectors");
-    }
-    std::vector<float> out(a.size());
-    for (size_t i = 0; i < a.size(); ++i) {
-        float diff = a[i] - b[i];
-        out[i] = diff * diff;
-    }
-    return out;
-}
-
-std::vector<float> Concatenate(const std::vector<std::vector<float>> &parts) {
-    size_t total = 0;
-    for (const auto &part : parts) {
-        total += part.size();
-    }
-    std::vector<float> combined;
-    combined.reserve(total);
-    for (const auto &part : parts) {
-        combined.insert(combined.end(), part.begin(), part.end());
-    }
-    return combined;
-}
-
-} // namespace lite
-
-std::vector<float> SecureForward(const std::vector<float> &llm_vec,
-                                 const std::vector<float> &query_vec) {
-    if (llm_vec.size() != query_vec.size()) {
-        throw std::invalid_argument("SecureForward expects equally shaped vectors");
-    }
+// In production this tensor would never exist in plaintext on the host CPU.
+// Instead the encrypted embeddings would be consumed by BOLT's secure linear
+// layers. Here we simply simulate that behaviour to keep the sample compact.
+torch::Tensor SecureForward(const torch::Tensor &llm_vec,
+                            const torch::Tensor &query_vec) {
+    TORCH_CHECK(llm_vec.sizes() == query_vec.sizes(),
+                "SecureForward expects equally shaped tensors");
 
     // --- Begin simulated BOLT secure computation block ----------------------
-    // Each operation below models the behaviour of a privacy-preserving layer
-    // that would live inside the BOLT enclave.
-    std::vector<float> product = lite::ElementWiseMultiply(llm_vec, query_vec);      // Secure mul
-    std::vector<float> distance = lite::ElementWiseSquareDifference(llm_vec, query_vec); // Secure sub + square
-    std::vector<float> combined =
-        lite::Concatenate({llm_vec, query_vec, product, distance});
-    combined = lite::Normalize(combined);
+    // The interaction tensor below is formed from element-wise products and
+    // differences. In a BOLT deployment each operation would be implemented as
+    // privacy-preserving linear / non-linear layers. These comments highlight
+    // where those implementations would be plugged in.
+    torch::Tensor product = llm_vec * query_vec;             // Secure mul
+    torch::Tensor distance = (llm_vec - query_vec).pow(2);   // Secure sub + square
+    torch::Tensor combined = torch::cat({llm_vec, query_vec, product, distance},
+                                        llm_vec.dim() - 1);
+    // Optional normalisation to stabilise inference.
+    combined = torch::nn::functional::normalize(
+        combined,
+        torch::nn::functional::NormalizeFuncOptions().p(2).dim(combined.dim() - 1));
     // --- End simulated BOLT secure computation block ------------------------
 
     return combined;
 }
 
-std::vector<float> LoadModelSignature(const std::string &model_path, bool &loaded) {
-    std::ifstream model(model_path, std::ios::binary);
-    if (!model) {
-        loaded = false;
-        return {};
-    }
-
-    std::vector<unsigned char> buffer(4096);
-    model.read(reinterpret_cast<char *>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
-    std::streamsize read = model.gcount();
-    if (read <= 0) {
-        loaded = false;
-        return {};
-    }
-
-    std::vector<float> signature(4, 0.0f);
-    for (std::streamsize i = 0; i < read; ++i) {
-        signature[i % signature.size()] += static_cast<float>(buffer[static_cast<size_t>(i)]) / 255.0f;
-    }
-
-    loaded = true;
-    return signature;
-}
-
-std::vector<float> ComputeModelLogits(const std::vector<float> &fused,
-                                      const std::vector<float> &signature) {
-    if (signature.empty()) {
-        return {};
-    }
-
-    std::vector<float> logits(signature.size(), 0.0f);
-    for (size_t i = 0; i < fused.size(); ++i) {
-        logits[i % logits.size()] += fused[i] * signature[i % signature.size()];
-    }
-    return logits;
-}
-
-std::vector<float> ComputeHeuristicLogits(const std::vector<float> &llm_vec,
-                                          const std::vector<float> &query_vec) {
-    float dot = lite::Dot(llm_vec, query_vec);
-    float query_energy = lite::SquaredL2Norm(query_vec);
-    float llm_energy = lite::SquaredL2Norm(llm_vec);
-
-    // Produce four interpretable scores.
-    std::vector<float> logits(4);
-    logits[0] = dot;
-    logits[1] = -dot;
-    logits[2] = query_energy;
-    logits[3] = llm_energy;
-    return logits;
-}
-
-int64_t ArgMaxIndex(const std::vector<float> &values) {
-    if (values.empty()) {
-        return 0;
-    }
-    return static_cast<int64_t>(std::distance(values.begin(),
-                                              std::max_element(values.begin(), values.end())));
-}
-
-std::string RouteSecurely(const std::vector<float> &llm_vec,
-                          const std::vector<float> &query_vec,
+std::string RouteSecurely(const torch::Tensor &llm_vec,
+                          const torch::Tensor &query_vec,
                           const std::string &model_path = "mirt_bert.snapshot") {
-    std::vector<float> fused = SecureForward(llm_vec, query_vec);
+    torch::Tensor fused = SecureForward(llm_vec, query_vec);
 
+    // Attempt to load the pretrained router. If unavailable, fall back to a
+    // deterministic heuristic so the demo can run end-to-end.
+    torch::jit::script::Module router_module;
     bool model_loaded = false;
-    std::vector<float> signature = LoadModelSignature(model_path, model_loaded);
+    try {
+        router_module = torch::jit::load(model_path);
+        router_module.eval();
+        model_loaded = true;
+    } catch (const c10::Error &e) {
+        std::cerr << "[secure-router] Warning: Unable to load " << model_path
+                  << ". Falling back to heuristic routing.\n";
+    }
 
-    std::vector<float> logits;
+    torch::Tensor logits;
     if (model_loaded) {
-        logits = ComputeModelLogits(fused, signature);
+        std::vector<torch::jit::IValue> inputs;
+        inputs.emplace_back(fused);
+        try {
+            logits = router_module.forward(inputs).toTensor();
+        } catch (const c10::Error &e) {
+            std::cerr << "[secure-router] Warning: Forward pass failed (" << e.what()
+                      << "). Falling back to heuristic routing.\n";
+            model_loaded = false;
+        }
     }
 
-    if (logits.empty()) {
-        logits = ComputeHeuristicLogits(llm_vec, query_vec);
+    if (!model_loaded) {
+        // Simple cosine-similarity heuristic between llm and query vectors.
+        auto norm_options = torch::nn::functional::NormalizeFuncOptions().p(2).dim(llm_vec.dim() - 1);
+        torch::Tensor norm_llm = torch::nn::functional::normalize(llm_vec, norm_options);
+        torch::Tensor norm_query = torch::nn::functional::normalize(query_vec, norm_options);
+        logits = (norm_llm * norm_query).sum(llm_vec.dim() - 1, true);
     }
 
-    int64_t route_id = ArgMaxIndex(logits);
+    // Pick the highest scoring backend index. Only the ID is shared back.
+    auto max_result = logits.squeeze().argmax();
+    int64_t route_id = max_result.item<int64_t>();
     return "llm_backend_" + std::to_string(route_id);
 }
 
@@ -264,6 +169,13 @@ std::vector<float> ReadEmbedding(const std::string &path) {
         }
     }
     return values;
+}
+
+torch::Tensor VectorToTensor(const std::vector<float> &values) {
+    torch::Tensor tensor = torch::from_blob(const_cast<float *>(values.data()),
+                                            {(int64_t)1, (int64_t)values.size()},
+                                            torch::TensorOptions().dtype(torch::kFloat));
+    return tensor.clone();
 }
 
 int main(int argc, char **argv) {
@@ -298,12 +210,15 @@ int main(int argc, char **argv) {
         EncryptedVector enc_llm = EncryptVector(llm_embedding);
 
         // The server only sees encrypted vectors. Within the secure enclave,
-        // they are decrypted and consumed by secure layers. This mirrors
+        // they are decrypted and consumed by secure layers. This split mirrors
         // BOLT's client/server trust model.
         std::vector<float> dec_query = DecryptVector(enc_query);
         std::vector<float> dec_llm = DecryptVector(enc_llm);
 
-        std::string route = RouteSecurely(dec_llm, dec_query, model_path);
+        torch::Tensor query_tensor = VectorToTensor(dec_query);
+        torch::Tensor llm_tensor = VectorToTensor(dec_llm);
+
+        std::string route = RouteSecurely(llm_tensor, query_tensor, model_path);
         std::cout << "Selected secure route: " << route << std::endl;
     } catch (const std::exception &ex) {
         std::cerr << "[secure-router] Error: " << ex.what() << std::endl;
