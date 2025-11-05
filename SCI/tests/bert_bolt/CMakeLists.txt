@@ -12,7 +12,7 @@ target_link_libraries(LIB_BERT SCI-HE)
 # add_executable(BERT_NONLINEAR "test_nonlinear.cpp")
 # target_link_libraries(BERT_NONLINEAR NONLINEAR)
 
-add_executable(mirt_bolt tests/bert_bolt/mirt_bolt.cpp)
+add_executable(mirt_bolt mirt_bolt.cpp)
 
 target_sources(mirt_bolt PRIVATE
   ${CMAKE_SOURCE_DIR}/src/library_fixed.cpp
