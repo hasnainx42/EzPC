@@ -20,5 +20,24 @@ target_link_libraries(BOLT_BERT LIB_BERT)
 # target_link_libraries(BOLT_WE_BERT LIB_BERT)
 
 add_executable(mirt_bolt mirt_bolt.cpp)
-target_link_libraries(mirt_bolt SCI-FIX SCI-OT SCI-UTILS)
+# Pull in the fixed-point implementation sources directly so we don't depend
+# on SCI-FIX / SCI-UTILS library targets existing in this branch.
+target_sources(mirt_bolt PRIVATE
+  ${CMAKE_SOURCE_DIR}/src/library_fixed.cpp
+  ${CMAKE_SOURCE_DIR}/src/cleartext_library_fixed.cpp
+  ${CMAKE_SOURCE_DIR}/src/library_fixed_uniform.cpp
+  ${CMAKE_SOURCE_DIR}/src/globals.cpp
+  ${CMAKE_SOURCE_DIR}/src/globals_float.cpp
+  ${CMAKE_SOURCE_DIR}/src/BuildingBlocks/truncation.cpp
+  ${CMAKE_SOURCE_DIR}/src/BuildingBlocks/aux-protocols.cpp
+  ${CMAKE_SOURCE_DIR}/src/BuildingBlocks/value-extension.cpp
+)
+
+# Link the libs that definitely exist (per your log).
+target_link_libraries(mirt_bolt PRIVATE SCI-OT)
+
+# You might also need these on some systems:
+# target_link_libraries(mirt_bolt PRIVATE pthread gmp crypto)
+
+
 
