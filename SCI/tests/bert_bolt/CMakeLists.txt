@@ -18,3 +18,7 @@ target_link_libraries(BOLT_BERT LIB_BERT)
 
 # add_executable(BOLT_WE_BERT "bolt_bert_word_elimination.cpp")
 # target_link_libraries(BOLT_WE_BERT LIB_BERT)
+
+add_executable(mirt_bolt tests/bert_bolt/mirt_bolt.cpp)
+target_link_libraries(mirt_bolt SCI-FIX SCI-OT SCI-UTILS)
+
