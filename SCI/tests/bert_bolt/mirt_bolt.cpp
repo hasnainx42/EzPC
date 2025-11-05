@@ -47,6 +47,8 @@ static void sigmoid_cubic(const int64_t *X, int64_t *Y, int n, int bw, int fracb
   const int64_t C05 = (int64_t)(0.5 * (1LL << fracbits));
   for (int i = 0; i < n; i++) Y[i] = C05 + t1[i] + t3[i];
 }
+int bitlength = 64;     // default; will set again after parsing
+int num_threads = 1;    // default; will set again after parsing
 
 int main(int argc, char **argv) {
   // --- Args ---
@@ -64,6 +66,8 @@ int main(int argc, char **argv) {
   const int fracbits = 16;      // scale S = 2^16
   const int theta_range = 3;    // integer multiplier
   const int a_range = 3;        // integer multiplier
+  const int bw = 64;
+  const int fracbits = 16;
 
   // --- MPC init (use IOPack signature in your tree) ---
   IOPack *iopack = new IOPack(party, /*port*/32000, address);
@@ -74,8 +78,14 @@ int main(int argc, char **argv) {
 +  sci::address     = address;           // e.g., "127.0.0.1"
 +  sci::port        = 32000;             // same as you used before
 +  sci::bitlength   = bw;                // 64
-+  sci::num_threads = 1;                 // or higher if you want
-+  initialize();                         // sets up global iopack/otpack
++  sci::num_threads = 1;
+   sci::bitlength   = bw;
+   sci::num_threads = 1;  
+   
+   bitlength   = bw;   // <--- bridge for files that use plain globals
+   num_threads = 1;// or higher if you want
++  initialize();    
+                       // sets up global iopack/otpack
   cout << "[Party " << party << "] BOLT init OK\n";
 
   // --- Load weights (server), zeros (client) ---
