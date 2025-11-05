@@ -1,6 +1,7 @@
 #include "library_fixed.h"
 #include "cleartext_library_fixed.h"
 #include "defines.h"
+#include "globals.h"  
 #include "utils/io_channel.h"
 #include "utils/net_io_channel.h"
 #include "utils/ArgMapping/ArgMapping.h"
@@ -68,6 +69,13 @@ int main(int argc, char **argv) {
   IOPack *iopack = new IOPack(party, /*port*/32000, address);
   OTPack *otpack = new OTPack(iopack, party);
   initialize();
+  +  // --- Wire SCI globals and let initialize() allocate I/OT packs ---
++  sci::party       = party;             // 0/1
++  sci::address     = address;           // e.g., "127.0.0.1"
++  sci::port        = 32000;             // same as you used before
++  sci::bitlength   = bw;                // 64
++  sci::num_threads = 1;                 // or higher if you want
++  initialize();                         // sets up global iopack/otpack
   cout << "[Party " << party << "] BOLT init OK\n";
 
   // --- Load weights (server), zeros (client) ---
@@ -156,5 +164,7 @@ int main(int argc, char **argv) {
   finalize();
   delete otpack;
   delete iopack;
+  return 0;
+  finalize();
   return 0;
 }
