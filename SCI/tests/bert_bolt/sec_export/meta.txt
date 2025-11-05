@@ -1,0 +1,5 @@
+S	65536
+D	768
+H	25
+a_range	3.0
+theta_range	3.0

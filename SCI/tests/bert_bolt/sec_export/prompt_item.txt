@@ -1,0 +1,5 @@
+PROMPT:
+Summarize a legal contract; focus on obligations and deadlines.
+
+ITEM:
+Legal-domain task descriptor for contract summarization.
